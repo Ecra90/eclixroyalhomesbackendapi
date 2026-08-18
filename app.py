@@ -10,27 +10,22 @@ import bcrypt
 
 import cloudinary
 import cloudinary.uploader
-
+import cloudinary.api
 from dotenv import load_dotenv
 
 
 # ============================================================
-# LOAD ENVIRONMENT VARIABLES
+# ENVIRONMENT
 # ============================================================
 
 load_dotenv()
 
 
 # ============================================================
-# FLASK APP
+# FLASK
 # ============================================================
 
 app = Flask(__name__)
-
-
-# ============================================================
-# SECRET KEY / SESSION CONFIGURATION
-# ============================================================
 
 app.secret_key = os.environ.get(
     "SECRET_KEY",
@@ -41,7 +36,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="None",
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_NAME="eclix_session"
+    SESSION_COOKIE_PATH="/"
 )
 
 
@@ -52,7 +47,7 @@ app.config.update(
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
-    "https://eclix-royal-homes-and-properties-fi-seven.vercel.app"
+    "https://eclix-royal-homes-and-properties-fi-seven.vercel.app",
 ]
 
 CORS(
@@ -64,12 +59,12 @@ CORS(
         "POST",
         "PUT",
         "DELETE",
-        "OPTIONS"
+        "OPTIONS",
     ],
     allow_headers=[
         "Content-Type",
-        "Authorization"
-    ]
+        "Authorization",
+    ],
 )
 
 
@@ -81,12 +76,12 @@ cloudinary.config(
     cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
     api_key=os.environ.get("CLOUDINARY_API_KEY"),
     api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
-    secure=True
+    secure=True,
 )
 
 
 # ============================================================
-# DATABASE CONFIGURATION
+# DATABASE
 # ============================================================
 
 DB_CONFIG = {
@@ -100,16 +95,13 @@ DB_CONFIG = {
 def get_db():
     """
     Create a new MySQL connection.
-
-    A new connection is created for each request because
-    Vercel uses serverless functions.
     """
 
     required = [
         "DB_HOST",
         "DB_USER",
         "DB_PASSWORD",
-        "DB_NAME"
+        "DB_NAME",
     ]
 
     missing = [
@@ -123,11 +115,13 @@ def get_db():
             + ", ".join(missing)
         )
 
-    return mysql.connector.connect(**DB_CONFIG)
+    return mysql.connector.connect(
+        **DB_CONFIG
+    )
 
 
 # ============================================================
-# HEALTH CHECK
+# HOME
 # ============================================================
 
 @app.route("/", methods=["GET"])
@@ -136,48 +130,94 @@ def home():
     return jsonify({
         "status": "online",
         "message": "Eclix Royal Homes & Properties API is running",
-        "api": "/api/properties"
+        "api": "/api/properties",
     })
 
+
+# ============================================================
+# TEST
+# ============================================================
 
 @app.route("/api/test", methods=["GET"])
 def test():
 
     return jsonify({
         "success": True,
-        "message": "Eclix backend is connected!"
+        "message": "Eclix backend is connected!",
     })
+
+
+# ============================================================
+# DATABASE TEST
+# ============================================================
+
+@app.route("/api/test/database", methods=["GET"])
+def test_database():
+
+    conn = None
+    cursor = None
+
+    try:
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT 1")
+
+        result = cursor.fetchone()
+
+        return jsonify({
+            "success": True,
+            "database": "connected",
+            "result": result[0] if result else None,
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "success": False,
+            "database": "failed",
+            "error": str(e),
+        }), 500
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
 
 
 # ============================================================
 # AUTH DECORATOR
 # ============================================================
 
-def login_required(f):
+def login_required(function):
 
-    @wraps(f)
+    @wraps(function)
     def decorated(*args, **kwargs):
 
         if "user_id" not in session:
 
             return jsonify({
-                "error": "Authentication required"
+                "error": "Authentication required",
             }), 401
 
-        return f(*args, **kwargs)
+        return function(*args, **kwargs)
 
     return decorated
 
 
 # ============================================================
-# DEBUG SESSION
+# SESSION DEBUG
 # ============================================================
 
 @app.route("/api/debug/session", methods=["GET"])
 def debug_session():
 
     return jsonify({
-        "session": dict(session)
+        "session": dict(session),
     })
 
 
@@ -185,10 +225,15 @@ def debug_session():
 # REGISTER
 # ============================================================
 
-@app.route("/api/auth/register", methods=["POST"])
+@app.route(
+    "/api/auth/register",
+    methods=["POST"]
+)
 def register():
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(
+        silent=True
+    ) or {}
 
     username = str(
         data.get("username", "")
@@ -210,10 +255,6 @@ def register():
         data.get("location", "")
     ).strip()
 
-    # --------------------------------------------------------
-    # VALIDATION
-    # --------------------------------------------------------
-
     if not username:
         return jsonify({
             "error": "Username is required"
@@ -234,23 +275,10 @@ def register():
             "error": "Password must be at least 6 characters"
         }), 400
 
-    # --------------------------------------------------------
-    # HASH PASSWORD
-    # --------------------------------------------------------
-
-    try:
-
-        hashed_password = bcrypt.hashpw(
-            password.encode("utf-8"),
-            bcrypt.gensalt()
-        ).decode("utf-8")
-
-    except Exception as e:
-
-        return jsonify({
-            "error": "Password processing failed",
-            "details": str(e)
-        }), 500
+    hashed = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
 
     conn = None
     cursor = None
@@ -272,30 +300,20 @@ def register():
                 location
             )
             VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s
-            )
+            (%s, %s, %s, %s, %s)
             """,
             (
                 username,
                 email,
-                hashed_password,
+                hashed,
                 phone,
-                location
+                location,
             )
         )
 
         conn.commit()
 
         user_id = cursor.lastrowid
-
-        # ----------------------------------------------------
-        # CREATE SESSION
-        # ----------------------------------------------------
 
         session.clear()
 
@@ -308,8 +326,8 @@ def register():
             "user": {
                 "id": user_id,
                 "username": username,
-                "email": email
-            }
+                "email": email,
+            },
         }), 201
 
     except mysql.connector.IntegrityError as e:
@@ -319,7 +337,7 @@ def register():
 
         return jsonify({
             "error": "Email already registered",
-            "details": str(e)
+            "details": str(e),
         }), 409
 
     except Exception as e:
@@ -329,7 +347,7 @@ def register():
 
         return jsonify({
             "error": "Registration failed",
-            "details": str(e)
+            "details": str(e),
         }), 500
 
     finally:
@@ -345,10 +363,15 @@ def register():
 # LOGIN
 # ============================================================
 
-@app.route("/api/auth/login", methods=["POST"])
+@app.route(
+    "/api/auth/login",
+    methods=["POST"]
+)
 def login():
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(
+        silent=True
+    ) or {}
 
     email = str(
         data.get("email", "")
@@ -361,7 +384,7 @@ def login():
     if not email or not password:
 
         return jsonify({
-            "error": "Email and password required"
+            "error": "Email and password required",
         }), 400
 
     conn = None
@@ -390,15 +413,17 @@ def login():
         if not user:
 
             return jsonify({
-                "error": "Invalid credentials"
+                "error": "Invalid credentials",
             }), 401
 
-        stored_password = user.get("password")
+        stored_password = user.get(
+            "password"
+        )
 
         if not stored_password:
 
             return jsonify({
-                "error": "Account password is invalid"
+                "error": "Invalid account password",
             }), 401
 
         try:
@@ -415,33 +440,38 @@ def login():
         if not password_valid:
 
             return jsonify({
-                "error": "Invalid credentials"
+                "error": "Invalid credentials",
             }), 401
 
-        # ----------------------------------------------------
-        # CREATE SESSION
-        # ----------------------------------------------------
+        user_id = user.get("userid")
+
+        if user_id is None:
+            user_id = user.get("user_id")
 
         session.clear()
 
-        session["user_id"] = user["userid"]
-        session["username"] = user["username"]
-        session["email"] = user["email"]
+        session["user_id"] = user_id
+        session["username"] = user.get(
+            "username"
+        )
+        session["email"] = user.get(
+            "email"
+        )
 
         return jsonify({
             "message": "Login successful",
             "user": {
-                "id": user["userid"],
-                "username": user["username"],
-                "email": user["email"]
-            }
+                "id": user_id,
+                "username": user.get("username"),
+                "email": user.get("email"),
+            },
         })
 
     except Exception as e:
 
         return jsonify({
             "error": "Login failed",
-            "details": str(e)
+            "details": str(e),
         }), 500
 
     finally:
@@ -457,13 +487,16 @@ def login():
 # LOGOUT
 # ============================================================
 
-@app.route("/api/auth/logout", methods=["POST"])
+@app.route(
+    "/api/auth/logout",
+    methods=["POST"]
+)
 def logout():
 
     session.clear()
 
     return jsonify({
-        "message": "Logged out successfully"
+        "message": "Logged out",
     })
 
 
@@ -471,20 +504,23 @@ def logout():
 # CURRENT USER
 # ============================================================
 
-@app.route("/api/auth/me", methods=["GET"])
+@app.route(
+    "/api/auth/me",
+    methods=["GET"]
+)
 def me():
 
     if "user_id" not in session:
 
         return jsonify({
-            "user": None
+            "user": None,
         })
 
     return jsonify({
         "user": {
             "id": session.get("user_id"),
             "username": session.get("username"),
-            "email": session.get("email")
+            "email": session.get("email"),
         }
     })
 
@@ -545,31 +581,19 @@ def add_property():
         "property_photo"
     )
 
-    # --------------------------------------------------------
-    # VALIDATION
-    # --------------------------------------------------------
-
-    if not property_name:
-
-        return jsonify({
-            "error": "Property name is required"
-        }), 400
-
-    if not property_location:
+    if (
+        not property_name
+        or not property_location
+        or not property_price
+    ):
 
         return jsonify({
-            "error": "Property location is required"
+            "error": "Property name, location and price are required"
         }), 400
 
-    if not property_price:
-
-        return jsonify({
-            "error": "Property price is required"
-        }), 400
-
-    # --------------------------------------------------------
+    # ========================================================
     # CLOUDINARY IMAGE
-    # --------------------------------------------------------
+    # ========================================================
 
     image_url = ""
 
@@ -579,7 +603,8 @@ def add_property():
 
             upload_result = cloudinary.uploader.upload(
                 image,
-                folder="eclix-properties"
+                folder="eclix-properties",
+                resource_type="image",
             )
 
             image_url = upload_result.get(
@@ -587,22 +612,16 @@ def add_property():
                 ""
             )
 
-            if not image_url:
-
-                return jsonify({
-                    "error": "Cloudinary did not return an image URL"
-                }), 500
-
         except Exception as e:
 
             return jsonify({
                 "error": "Image upload failed",
-                "details": str(e)
+                "details": str(e),
             }), 500
 
-    # --------------------------------------------------------
+    # ========================================================
     # DATABASE
-    # --------------------------------------------------------
+    # ========================================================
 
     conn = None
     cursor = None
@@ -629,18 +648,7 @@ def add_property():
                 property_beds
             )
             VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s
-            )
+            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 property_name,
@@ -652,7 +660,7 @@ def add_property():
                 property_featured,
                 property_for_sale,
                 property_bath,
-                property_beds
+                property_beds,
             )
         )
 
@@ -663,7 +671,7 @@ def add_property():
         return jsonify({
             "message": "Property added successfully",
             "property_id": property_id,
-            "image": image_url
+            "image": image_url,
         }), 201
 
     except Exception as e:
@@ -673,7 +681,7 @@ def add_property():
 
         return jsonify({
             "error": "Could not save property",
-            "details": str(e)
+            "details": str(e),
         }), 500
 
     finally:
@@ -686,7 +694,7 @@ def add_property():
 
 
 # ============================================================
-# GET ALL PROPERTIES
+# GET PROPERTIES
 # ============================================================
 
 @app.route(
@@ -722,16 +730,14 @@ def get_properties():
         query = """
             SELECT *
             FROM property_details
-            WHERE 1=1
+            WHERE 1 = 1
         """
 
         params = []
 
-        # ----------------------------------------------------
-        # SEARCH
-        # ----------------------------------------------------
-
         if search:
+
+            search_value = f"%{search}%"
 
             query += """
                 AND (
@@ -741,17 +747,11 @@ def get_properties():
                 )
             """
 
-            search_value = f"%{search}%"
-
             params.extend([
                 search_value,
                 search_value,
-                search_value
+                search_value,
             ])
-
-        # ----------------------------------------------------
-        # FEATURED
-        # ----------------------------------------------------
 
         if featured == "1":
 
@@ -759,19 +759,11 @@ def get_properties():
                 AND property_featured = 1
             """
 
-        # ----------------------------------------------------
-        # FOR SALE
-        # ----------------------------------------------------
-
         if for_sale == "1":
 
             query += """
                 AND property_for_sale = 1
             """
-
-        # ----------------------------------------------------
-        # ORDER
-        # ----------------------------------------------------
 
         query += """
             ORDER BY property_id DESC
@@ -785,14 +777,14 @@ def get_properties():
         properties = cursor.fetchall()
 
         return jsonify({
-            "properties": properties
+            "properties": properties,
         })
 
     except Exception as e:
 
         return jsonify({
-            "error": "Could not load properties",
-            "details": str(e)
+            "error": "Could not fetch properties",
+            "details": str(e),
         }), 500
 
     finally:
@@ -805,7 +797,7 @@ def get_properties():
 
 
 # ============================================================
-# GET SINGLE PROPERTY
+# GET ONE PROPERTY
 # ============================================================
 
 @app.route(
@@ -840,18 +832,18 @@ def get_property(property_id):
         if not property_data:
 
             return jsonify({
-                "error": "Property not found"
+                "error": "Property not found",
             }), 404
 
         return jsonify({
-            "property": property_data
+            "property": property_data,
         })
 
     except Exception as e:
 
         return jsonify({
-            "error": "Could not load property",
-            "details": str(e)
+            "error": "Could not fetch property",
+            "details": str(e),
         }), 500
 
     finally:
@@ -864,7 +856,7 @@ def get_property(property_id):
 
 
 # ============================================================
-# GET FAVOURITES
+# FAVOURITES
 # ============================================================
 
 @app.route(
@@ -900,14 +892,14 @@ def get_favourites():
         favourites = cursor.fetchall()
 
         return jsonify({
-            "favourites": favourites
+            "favourites": favourites,
         })
 
     except Exception as e:
 
         return jsonify({
-            "error": "Could not load favourites",
-            "details": str(e)
+            "error": "Could not fetch favourites",
+            "details": str(e),
         }), 500
 
     finally:
@@ -939,9 +931,24 @@ def toggle_favourite(property_id):
 
         cursor = conn.cursor()
 
-        # ----------------------------------------------------
-        # ADD
-        # ----------------------------------------------------
+        # Check property exists
+        cursor.execute(
+            """
+            SELECT property_id
+            FROM property_details
+            WHERE property_id = %s
+            LIMIT 1
+            """,
+            (property_id,)
+        )
+
+        property_exists = cursor.fetchone()
+
+        if not property_exists:
+
+            return jsonify({
+                "error": "Property not found",
+            }), 404
 
         if request.method == "POST":
 
@@ -953,22 +960,15 @@ def toggle_favourite(property_id):
                     property_id
                 )
                 VALUES
-                (
-                    %s,
-                    %s
-                )
+                (%s, %s)
                 """,
                 (
                     session["user_id"],
-                    property_id
+                    property_id,
                 )
             )
 
             message = "Added to favourites"
-
-        # ----------------------------------------------------
-        # REMOVE
-        # ----------------------------------------------------
 
         else:
 
@@ -980,7 +980,7 @@ def toggle_favourite(property_id):
                 """,
                 (
                     session["user_id"],
-                    property_id
+                    property_id,
                 )
             )
 
@@ -989,7 +989,7 @@ def toggle_favourite(property_id):
         conn.commit()
 
         return jsonify({
-            "message": message
+            "message": message,
         })
 
     except Exception as e:
@@ -999,7 +999,7 @@ def toggle_favourite(property_id):
 
         return jsonify({
             "error": "Favourite operation failed",
-            "details": str(e)
+            "details": str(e),
         }), 500
 
     finally:
@@ -1047,7 +1047,7 @@ def create_booking():
     if not property_id:
 
         return jsonify({
-            "error": "Property ID required"
+            "error": "Property ID required",
         }), 400
 
     conn = None
@@ -1059,10 +1059,7 @@ def create_booking():
 
         cursor = conn.cursor()
 
-        # ----------------------------------------------------
-        # CHECK PROPERTY EXISTS
-        # ----------------------------------------------------
-
+        # Make sure property exists
         cursor.execute(
             """
             SELECT property_id
@@ -1078,12 +1075,8 @@ def create_booking():
         if not property_exists:
 
             return jsonify({
-                "error": "Property not found"
+                "error": "Property not found",
             }), 404
-
-        # ----------------------------------------------------
-        # CREATE BOOKING
-        # ----------------------------------------------------
 
         cursor.execute(
             """
@@ -1098,22 +1091,14 @@ def create_booking():
                 created_at
             )
             VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                'pending',
-                NOW()
-            )
+            (%s, %s, %s, %s, %s, 'pending', NOW())
             """,
             (
                 session["user_id"],
                 property_id,
                 booking_type,
                 notes,
-                booking_date
+                booking_date,
             )
         )
 
@@ -1122,8 +1107,8 @@ def create_booking():
         booking_id = cursor.lastrowid
 
         return jsonify({
-            "message": "Booking created successfully",
-            "booking_id": booking_id
+            "message": "Booking created",
+            "booking_id": booking_id,
         }), 201
 
     except Exception as e:
@@ -1133,7 +1118,7 @@ def create_booking():
 
         return jsonify({
             "error": "Could not create booking",
-            "details": str(e)
+            "details": str(e),
         }), 500
 
     finally:
@@ -1186,39 +1171,37 @@ def get_bookings():
 
         bookings = cursor.fetchall()
 
-        # ----------------------------------------------------
-        # CONVERT DATETIME VALUES TO JSON SAFE STRINGS
-        # ----------------------------------------------------
-
         for booking in bookings:
 
             if isinstance(
                 booking.get("created_at"),
-                (datetime,)
+                datetime
             ):
 
                 booking["created_at"] = (
-                    booking["created_at"].isoformat()
+                    booking["created_at"]
+                    .isoformat()
                 )
 
             if isinstance(
                 booking.get("booking_date"),
-                (datetime,)
+                datetime
             ):
 
                 booking["booking_date"] = (
-                    booking["booking_date"].isoformat()
+                    booking["booking_date"]
+                    .isoformat()
                 )
 
         return jsonify({
-            "bookings": bookings
+            "bookings": bookings,
         })
 
     except Exception as e:
 
         return jsonify({
-            "error": "Could not load bookings",
-            "details": str(e)
+            "error": "Could not fetch bookings",
+            "details": str(e),
         }), 500
 
     finally:
@@ -1251,7 +1234,7 @@ def newsletter():
     if not email:
 
         return jsonify({
-            "error": "Email required"
+            "error": "Email required",
         }), 400
 
     conn = None
@@ -1271,10 +1254,7 @@ def newsletter():
                 subscribed_at
             )
             VALUES
-            (
-                %s,
-                NOW()
-            )
+            (%s, NOW())
             """,
             (email,)
         )
@@ -1282,8 +1262,8 @@ def newsletter():
         conn.commit()
 
         return jsonify({
-            "message": "Subscribed successfully"
-        }), 201
+            "message": "Subscribed successfully",
+        })
 
     except Exception as e:
 
@@ -1292,7 +1272,7 @@ def newsletter():
 
         return jsonify({
             "error": "Newsletter subscription failed",
-            "details": str(e)
+            "details": str(e),
         }), 500
 
     finally:
@@ -1305,44 +1285,18 @@ def newsletter():
 
 
 # ============================================================
-# GLOBAL ERROR HANDLER
-# ============================================================
-
-@app.errorhandler(404)
-def not_found(error):
-
-    return jsonify({
-        "error": "Endpoint not found",
-        "path": request.path
-    }), 404
-
-
-@app.errorhandler(405)
-def method_not_allowed(error):
-
-    return jsonify({
-        "error": "Method not allowed",
-        "method": request.method,
-        "path": request.path
-    }), 405
-
-
-@app.errorhandler(500)
-def internal_error(error):
-
-    return jsonify({
-        "error": "Internal server error"
-    }), 500
-
-
-# ============================================================
-# LOCAL DEVELOPMENT
+# VERCEL / LOCAL ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
 
     app.run(
         host="0.0.0.0",
-        port=5000,
+        port=int(
+            os.environ.get(
+                "PORT",
+                5000
+            )
+        ),
         debug=True
     )
