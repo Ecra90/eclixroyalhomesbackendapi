@@ -15,23 +15,32 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.secret_key = os.environ.get("SECRET_KEY", "eclix-royal-secret-2026")
 app.config.update(
     SESSION_COOKIE_SAMESITE="None",
-    SESSION_COOKIE_SECURE=False
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    UPLOAD_FOLDER=UPLOAD_FOLDER
 )
 
 CORS(
     app,
     supports_credentials=True,
     origins=[
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://eclix-royal-homes-and-properties-fi-seven.vercel.app"
     ]
 )
-
+@app.route("/api/test", methods=["GET"])
+def test():
+    return jsonify({
+        "success": True,
+        "message": "Eclix backend is connected!"
+    })
 # ─── DB CONFIG ────────────────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host": os.environ.get("DB_HOST", "mysql-ecraswala.alwaysdata.net"),
-    "user": os.environ.get("DB_USER", "ecraswala"),
-    "password": os.environ.get("DB_PASSWORD", "modcom2026"),
-    "database": os.environ.get("DB_NAME", "ecraswala_eclix_royal_homes"),
+    "host": os.environ.get("DB_HOST",),
+    "user": os.environ.get("DB_USER",),
+    "password": os.environ.get("DB_PASSWORD",),
+    "database": os.environ.get("DB_NAME",),
 }
 
 
