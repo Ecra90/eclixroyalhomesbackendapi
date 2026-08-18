@@ -1,3 +1,11 @@
+try:
+    import importlib
+    cloudinary = importlib.import_module("cloudinary")
+    uploader = cloudinary.uploader
+except ImportError:  # pragma: no cover - optional dependency for local/dev setup
+    cloudinary = None
+    uploader = None
+
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 import mysql.connector
@@ -7,7 +15,15 @@ from functools import wraps
 from datetime import datetime
 
 app = Flask(__name__)
-#stati folder configuration 
+if cloudinary is not None:
+    cloudinary.config(
+        cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+        api_key=os.environ.get("CLOUDINARY_API_KEY"),
+        api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+        secure=True
+    )
+    # Keep the uploader module available for later Cloudinary operations.
+    _ = uploader
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -165,16 +181,22 @@ def add_property():
     if not all([property_name, property_location, property_price]):
         return jsonify({"error": "Missing required fields"}), 400
 
-    filename = ""  # ONLY filename stored in DB
+    # ONLY filename stored in DB
+    image_url = ""
 
     if image:
-        os.makedirs("static/uploads", exist_ok=True)
+        try:
+            upload_result = cloudinary.uploader.upload(
+                image,
+                folder="eclix_royal_homes/properties"
+            )
 
-        # ✅ store ONLY original filename (no timestamp, no path)
-        filename = image.filename
+            image_url = upload_result.get("secure_url", "")
 
-        save_path = os.path.join("static/uploads", filename)
-        image.save(save_path)
+        except Exception as e:
+            return jsonify({
+                "error": f"Image upload failed: {str(e)}"
+            }), 500
 
     try:
         conn = get_db()
@@ -192,7 +214,7 @@ def add_property():
             property_location,
             property_price,
             property_description,
-            filename,   # ✅ ONLY IMAGE NAME SAVED HERE
+            image_url,   # ✅ ONLY IMAGE URL SAVED HERE
             property_size,
             property_featured,
             property_for_sale,
@@ -209,7 +231,7 @@ def add_property():
         return jsonify({
             "message": "Property added successfully",
             "property_id": property_id,
-            "image": filename
+            "image": image_url
         }), 201
 
     except Exception as e:
