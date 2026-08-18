@@ -35,6 +35,7 @@ def test():
         "success": True,
         "message": "Eclix backend is connected!"
     })
+
 # ─── DB CONFIG ────────────────────────────────────────────────────────────────
 DB_CONFIG = {
     "host": os.environ.get("DB_HOST",),
@@ -370,6 +371,13 @@ def newsletter():
         return jsonify({"message": "Subscribed successfully"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
+@app.route("/")
+def home():
+    return jsonify({
+        "status": "online",
+        "message": "Eclix Royal Homes & Properties API is running",
+        "api": "/api/properties"
+    })
 if __name__ == "__main__":
+    
     app.run(debug=True, port=5000)
