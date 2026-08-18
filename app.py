@@ -594,34 +594,39 @@ def add_property():
     # ========================================================
     # CLOUDINARY IMAGE
     # ========================================================
-
     image_url = ""
 
     if image and image.filename:
-
         try:
-
             upload_result = cloudinary.uploader.upload(
                 image,
-                folder="eclix-properties",
-                resource_type="image",
+                folder="eclix_royal_homes/properties"
             )
-
-            image_url = upload_result.get(
-                "secure_url",
-                ""
-            )
-
+            image_url = upload_result.get("secure_url", "")
         except Exception as e:
+            print("Cloudinary upload error:", e)
 
-            return jsonify({
-                "error": "Image upload failed",
-                "details": str(e),
-            }), 500
+            try:
+                upload_result = cloudinary.uploader.upload(
+                    image,
+                    folder="eclix-properties",
+                    resource_type="image",
+                )
 
-    # ========================================================
-    # DATABASE
-    # ========================================================
+                image_url = upload_result.get(
+                    "secure_url",
+                    ""
+                )
+
+            except Exception as e:
+                return jsonify({
+                    "error": "Image upload failed",
+                    "details": str(e),
+                }), 500
+
+        # ========================================================
+        # DATABASE
+        # ========================================================
 
     conn = None
     cursor = None
