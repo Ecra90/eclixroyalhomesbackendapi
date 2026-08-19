@@ -2,6 +2,8 @@ import os
 from functools import wraps
 from datetime import datetime
 
+import requests
+
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 
@@ -122,7 +124,304 @@ def get_db():
 
 # ============================================================
 # HOME
+# ============================================================# ============================================================
+# MPESA / SAFARICOM DARaja
 # ============================================================
+
+MPESA_ENV = os.environ.get("MPESA_ENV", "sandbox").lower()
+
+if MPESA_ENV == "production":
+    MPESA_BASE_URL = "https://api.safaricom.co.ke"
+else:
+    MPESA_BASE_URL = "https://sandbox.safaricom.co.ke"
+
+MPESA_CONSUMER_KEY = os.environ.get("MPESA_CONSUMER_KEY")
+MPESA_CONSUMER_SECRET = os.environ.get("MPESA_CONSUMER_SECRET")
+MPESA_SHORTCODE = os.environ.get("MPESA_SHORTCODE")
+MPESA_PASSKEY = os.environ.get("MPESA_PASSKEY")
+
+MPESA_CALLBACK_URL = os.environ.get(
+    "MPESA_CALLBACK_URL"
+)
+
+# ============================================================
+# MPESA HELPERS
+# ============================================================
+
+def get_mpesa_access_token():
+
+    if not MPESA_CONSUMER_KEY or not MPESA_CONSUMER_SECRET:
+        raise RuntimeError(
+            "M-Pesa consumer key/secret are not configured"
+        )
+
+    credentials = (
+        f"{MPESA_CONSUMER_KEY}:{MPESA_CONSUMER_SECRET}"
+    )
+
+    encoded_credentials = base64.b64encode(
+        credentials.encode("utf-8")
+    ).decode("utf-8")
+
+    response = requests.get(
+        f"{MPESA_BASE_URL}/oauth/v1/generate",
+        params={
+            "grant_type": "client_credentials"
+        },
+        headers={
+            "Authorization":
+                f"Basic {encoded_credentials}"
+        },
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    token = data.get("access_token")
+
+    if not token:
+        raise RuntimeError(
+            "Could not obtain M-Pesa access token"
+        )
+
+    return token
+
+
+def normalize_phone(phone):
+
+    phone = str(phone).strip()
+
+    phone = phone.replace(" ", "")
+    phone = phone.replace("-", "")
+
+    if phone.startswith("+254"):
+        return phone[1:]
+
+    if phone.startswith("254"):
+        return phone
+
+    if phone.startswith("07") or phone.startswith("01"):
+        return "254" + phone[1:]
+
+    raise ValueError(
+        "Enter a valid Kenyan M-Pesa number"
+    )
+
+
+def generate_mpesa_password(timestamp):
+
+    raw = (
+        f"{MPESA_SHORTCODE}"
+        f"{MPESA_PASSKEY}"
+        f"{timestamp}"
+    )
+
+    return base64.b64encode(
+        raw.encode("utf-8")
+    ).decode("utf-8")
+
+# ============================================================
+# ECLIX FEATURED PROPERTY PACKAGES
+# ============================================================
+
+FEATURED_PACKAGES = {
+    "featured_7": {
+        "name": "Featured - 7 Days",
+        "amount": 500,
+        "days": 7,
+    },
+    "featured_14": {
+        "name": "Featured - 14 Days",
+        "amount": 1000,
+        "days": 14,
+    },
+    "featured_30": {
+        "name": "Featured - 30 Days",
+        "amount": 2000,
+        "days": 30,
+    },
+}
+
+# ============================================================
+# MPESA CALLBACK
+# ============================================================
+
+@app.route(
+    "/api/payments/mpesa/callback",
+    methods=["POST"]
+)
+def mpesa_callback():
+
+    data = request.get_json(
+        silent=True
+    ) or {}
+
+    print(
+        "M-PESA CALLBACK:",
+        data
+    )
+
+    try:
+
+        stk_callback = (
+            data
+            .get("Body", {})
+            .get("stkCallback", {})
+        )
+
+        checkout_request_id = (
+            stk_callback
+            .get("CheckoutRequestID")
+        )
+
+        result_code = stk_callback.get(
+            "ResultCode"
+        )
+
+        result_description = stk_callback.get(
+            "ResultDesc"
+        )
+
+        if not checkout_request_id:
+
+            return jsonify({
+                "ResultCode": 0,
+                "ResultDesc":
+                    "Accepted"
+            })
+
+        conn = get_db()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+        # ----------------------------------------------------
+        # Find payment
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM property_payments
+            WHERE checkout_request_id = %s
+            LIMIT 1
+            """,
+            (checkout_request_id,)
+        )
+
+        payment = cursor.fetchone()
+
+        if not payment:
+
+            cursor.close()
+            conn.close()
+
+            return jsonify({
+                "ResultCode": 0,
+                "ResultDesc":
+                    "Accepted"
+            })
+
+        # ----------------------------------------------------
+        # Successful payment
+        # ----------------------------------------------------
+
+        if int(result_code) == 0:
+
+            callback_metadata = (
+                stk_callback
+                .get("CallbackMetadata", {})
+                .get("Item", [])
+            )
+
+            mpesa_receipt = None
+
+            for item in callback_metadata:
+
+                if item.get("Name") == (
+                    "MpesaReceiptNumber"
+                ):
+
+                    mpesa_receipt = item.get(
+                        "Value"
+                    )
+
+            cursor.execute(
+                """
+                UPDATE property_payments
+                SET
+                    status = 'completed',
+                    result_code = %s,
+                    result_description = %s,
+                    mpesa_receipt = %s,
+                    completed_at = NOW()
+                WHERE payment_id = %s
+                """,
+                (
+                    str(result_code),
+                    result_description,
+                    mpesa_receipt,
+                    payment["payment_id"],
+                )
+            )
+
+            # ------------------------------------------------
+            # Activate featured property
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                UPDATE property_details
+                SET
+                    property_featured = 1,
+                    featured_until = DATE_ADD(
+                        NOW(),
+                        INTERVAL %s DAY
+                    )
+                WHERE property_id = %s
+                """,
+                (
+                    payment["duration_days"],
+                    payment["property_id"],
+                )
+            )
+
+        else:
+
+            cursor.execute(
+                """
+                UPDATE property_payments
+                SET
+                    status = 'failed',
+                    result_code = %s,
+                    result_description = %s
+                WHERE payment_id = %s
+                """,
+                (
+                    str(result_code),
+                    result_description,
+                    payment["payment_id"],
+                )
+            )
+
+        conn.commit()
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+
+        print(
+            "M-PESA CALLBACK ERROR:",
+            str(e)
+        )
+
+    return jsonify({
+        "ResultCode": 0,
+        "ResultDesc": "Accepted"
+    })
 
 @app.route("/", methods=["GET"])
 def home():
@@ -762,6 +1061,10 @@ def get_properties():
 
             query += """
                 AND property_featured = 1
+                AND (
+                    featured_until IS NULL
+                    OR featured_until > NOW()
+                )
             """
 
         if for_sale == "1":
@@ -769,6 +1072,19 @@ def get_properties():
             query += """
                 AND property_for_sale = 1
             """
+
+        # Automatically deactivate expired promotions
+        cursor.execute(
+            """
+            UPDATE property_details
+            SET property_featured = 0
+            WHERE property_featured = 1
+            AND featured_until IS NOT NULL
+            AND featured_until <= NOW()
+            """
+        )
+
+        conn.commit()
 
         query += """
             ORDER BY property_id DESC
